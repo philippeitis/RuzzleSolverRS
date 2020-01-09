@@ -26,9 +26,9 @@ const MAX_WORD_LEN: usize = 12;
 const BOARD_SIZE: usize = 4;
 const BOARD_SIZE_I8: i8 = BOARD_SIZE as i8;
 
-// These options can be tweaked to improve performance if necessary."""
+// These options can be tweaked to improve performance if necessary.
 const PREFIX_LOWER_BOUND: usize = 2;
-const PREFIX_UPPER_BOUND: usize = 10;
+const PREFIX_UPPER_BOUND: usize = 8;
 
 const U64_TO_CHAR: [char; 27] = ['!', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I',
     'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'];
@@ -367,8 +367,8 @@ fn gen_graph() -> Vec<Vec<Vec<(usize, usize)>>> {
 /// Generates a matrix of vertices that have been visited.
 fn gen_visited() -> Vec<Vec<bool>> {
     let mut visited: Vec<Vec<bool>> = Vec::new();
-    for _i in 0..4 {
-        visited.push([false; 4].to_vec());
+    for _i in 0..BOARD_SIZE {
+        visited.push([false; BOARD_SIZE].to_vec());
     }
     return visited;
 }
@@ -419,7 +419,7 @@ fn main() {
 
     println!("{:#?}", now.elapsed().as_secs_f32());
     println!("{}", ruzzle_board.word_info_as_str.len());
-    for (word, score, _) in ruzzle_board.word_info_as_str {
-        println!("{}, {}", word, score);
-    }
+//    for (word, score, _) in ruzzle_board.word_info_as_str {
+//        println!("{}, {}", word, score);
+//    }
 }
