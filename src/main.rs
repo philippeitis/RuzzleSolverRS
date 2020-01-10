@@ -1,10 +1,9 @@
 use std::collections::{HashSet, HashMap};
 use std::fs::File;
-use std::io::{BufReader, BufRead};
+use std::io::{BufReader, BufRead, Read, Write};
 use std::time::Instant;
 use fnv::{FnvHashSet, FnvHasher};
 use std::hash::BuildHasherDefault;
-
 
 /// Source: https://stackoverflow.com/questions/27582739/how-do-i-create-a-hashmap-literal
 macro_rules! map (
@@ -123,6 +122,26 @@ fn read_prefixes(str_to_u64: &HashMap<char, u64>) -> HashSet<u64, BuildHasherDef
     return prefixes;
 }
 
+fn read_prefixes_to_u64() -> HashSet<u64, BuildHasherDefault<FnvHasher>> {
+//    let mut prefixes: HashSet<u64> = HashSet::with_capacity(250000);
+    let mut prefixes = FnvHashSet::with_capacity_and_hasher(350000, Default::default());
+    let file = File::open("./data/prefixes/binary.bin").unwrap();
+
+    //         let res = reader.read_u64::<BigEndian>().unwrap();
+    let mut reader = BufReader::new(file);
+    let mut s = [0; 8];
+    loop {
+        let res = reader.read(&mut s).unwrap();
+        if res == 8 {
+            let val = u64::from_be_bytes(s);
+            prefixes.insert(val);
+        } else {
+            break;
+        }
+    }
+    return prefixes;
+}
+
 // TODO: This can probably be made a lot faster, since we discard the strings after we've
 //       generated a u64 from them:
 //       Should try to use a buffer string.
@@ -138,6 +157,24 @@ fn read_dict(str_to_u64: &HashMap<char, u64>) -> HashSet<u64> {
         let res = reader.read_line(&mut s).unwrap();
         if res != 0 {
             dict.insert(string_to_u64(&s[..res-2].to_owned(), str_to_u64));
+        } else {
+            break;
+        }
+    }
+    return dict;
+}
+
+fn read_binary_dict() -> HashSet<u64> {
+    let mut dict = HashSet::with_capacity(200000);
+    let file = File::open("./data/TWL06/binary.bin").unwrap();
+
+    //         let res = reader.read_u64::<BigEndian>().unwrap();
+    let mut reader = BufReader::new(file);
+    let mut s = [0; 8];
+    loop {
+        let res = reader.read(&mut s).unwrap();
+        if res == 8 {
+            dict.insert(u64::from_be_bytes(s));
         } else {
             break;
         }
@@ -401,6 +438,20 @@ fn gen_graph() -> Vec<Vec<usize>> {
     return graph;
 }
 
+fn write_to_file(board: Board) {
+    let mut file = File::create("./words.txt").unwrap();
+
+    for (word, score, path) in board.word_info_as_str {
+        file.write(format!("{}, {}, [", word, score).as_bytes()).unwrap();
+
+        for i in 0..path.len() - 1 {
+            let (x, y) = path[i];
+            file.write(format!("({}, {}), ", x, y).as_bytes()).unwrap();
+        }
+        let (x, y) = *path.last().unwrap();
+        file.write(format!("({}, {})]\n", x, y).as_bytes()).unwrap();
+    }
+}
 /// Generates a matrix of vertices that have been visited.
 fn gen_visited() -> Vec<bool> {
     [false; BOARD_SIZE * BOARD_SIZE].to_vec()
@@ -427,8 +478,9 @@ fn main() {
     'O'=> 15, 'P'=> 16, 'Q'=> 17, 'R'=> 18, 'S'=> 19, 'T'=> 20, 'U'=> 21, 'V'=> 22, 'W'=> 23,
     'X' => 24, 'Y' => 25, 'Z'=> 26, '2' => 27, '3' => 28, '-' => 29};
 
-    let prefixes = read_prefixes(&str_to_u64_map);
-    let dictionary = read_dict(&str_to_u64_map);
+    let prefixes = read_prefixes_to_u64();
+    // read_prefixes(&str_to_u64_map);
+    let dictionary = read_binary_dict();
     let raw_board = read_board(PATH_TO_BOARD.to_string());
 
     println!("{}", now.elapsed().as_secs_f32());
@@ -462,9 +514,6 @@ fn main() {
     let solver_now = Instant::now();
 
     all_combos(&mut ruzzle_board);
-    println!("{:#?}", solver_now.elapsed().as_secs_f32());
-    println!("{}", ruzzle_board.word_info_as_str.len());
-//    for (word, score, _) in ruzzle_board.word_info_as_str {
-//        println!("{}, {}", word, score);
-//    }
+
+    write_to_file(ruzzle_board);
 }
