@@ -27,6 +27,8 @@ const MAX_WORD_LEN: usize = 12;
 
 const BOARD_SIZE: usize = 4;
 const BOARD_SIZE_I8: i8 = BOARD_SIZE as i8;
+const POINT_VALS: [usize; 27] = [0, 1, 4, 4, 2, 1, 4, 3, 4, 1, 10, 5, 1, 3, 1, 1, 4,
+    10, 1, 1, 1, 2, 4, 4, 8, 4, 8];
 
 // These options can be tweaked to improve performance if necessary.
 const PREFIX_LOWER_BOUND: usize = 2;
@@ -95,6 +97,9 @@ fn dfs_helper(board: &mut Board, start_point: usize) {
 fn dfs(board: &mut Board, graph: Vec<Vec<usize>>, start_point: usize, start_char: u64,
        start_pts: usize, start_mult: usize) {
     let mut stack: Vec<(u64, u64, usize, usize, usize, usize)> = Vec::with_capacity(40);
+    /// Paths consist of 12 five bit vertices:
+    /// [continuation_flag:1][x:2][y:2]
+
     let path = (16 | start_point) as u64;
     stack.push((path, start_char, start_pts, start_mult, 1, 0));
 
@@ -148,8 +153,8 @@ fn dfs(board: &mut Board, graph: Vec<Vec<usize>>, start_point: usize, start_char
 /// correspond to the letter in U64_TO_CHAR with the same index (eg. as usize).
 fn string_to_u64(string_to_convert: &String, str_to_u64: &HashMap<char, u64>) -> u64 {
     let mut output: u64 = 0;
-    for c in string_to_convert.chars() {
-        output = (output << 5) | str_to_u64[&c];
+    for c_u64 in string_to_convert.chars().map(|c| str_to_u64[&c]) {
+        output = (output << 5) | c_u64;
     }
     return output;
 }
@@ -165,11 +170,11 @@ fn parse_to_str(str_as_num: u64) -> String {
     for _ in 0..12 {
         // Read the last five bits.
         let val = (str_numbers & 31) as usize;
-        str_numbers = str_numbers >> 5;
         if val == 0 {
             break;
         } else {
             max_bit -= 1;
+            str_numbers >>= 5;
             str_repr[max_bit] = U64_TO_CHAR[val];
         }
     }
@@ -216,7 +221,7 @@ fn read_prefixes(str_to_u64: &HashMap<char, u64>) -> HashSet<u64, BuildHasherDef
 }
 
 /// Reads files which have been preprocessed to be compressed string representations.
-fn read_prefixes_to_u64() -> HashSet<u64, BuildHasherDefault<FnvHasher>> {
+fn read_binary_prefixes() -> HashSet<u64, BuildHasherDefault<FnvHasher>> {
     let mut prefixes = FnvHashSet::with_capacity_and_hasher(250000, Default::default());
     let file = File::open("./data/prefixes/binary.bin").unwrap();
 
@@ -331,19 +336,18 @@ fn get_points(board: &Vec<Vec<u64>>, word_mults: &Vec<Vec<u64>>) -> Vec<Vec<usiz
     let mut points = Vec::new();
 
     // Each index is a point - eg. A = 1. We skip 0.
-    let point_vals: [usize; 27] = [0, 1, 4, 4, 2, 1, 4, 3, 4, 1, 10, 5, 1, 3, 1, 1, 4,
-        10, 1, 1, 1, 2, 4, 4, 8, 4, 8];
 
     for (board_line, mult_line) in board.iter().zip(word_mults) {
         let mut line_points: Vec<usize> = Vec::new();
         for (letter, mult) in board_line.iter().zip(mult_line) {
-            let letter_points = point_vals[*letter as usize];
+            let letter_points = POINT_VALS[*letter as usize];
             line_points.push(letter_points * match *mult {
                 D_U64 => 2,
                 T_U64 => 3,
                 _ => 1,
             });
         }
+
         points.push(line_points);
     }
 
@@ -387,7 +391,7 @@ fn main() {
     'O'=> 15, 'P'=> 16, 'Q'=> 17, 'R'=> 18, 'S'=> 19, 'T'=> 20, 'U'=> 21, 'V'=> 22, 'W'=> 23,
     'X' => 24, 'Y' => 25, 'Z'=> 26, '2' => 27, '3' => 28, '-' => 29};
 
-    let prefixes = read_prefixes_to_u64();
+    let prefixes = read_binary_prefixes();
     let dictionary = read_binary_dict();
     let raw_board = read_board(PATH_TO_BOARD.to_string());
 
@@ -430,6 +434,7 @@ fn main() {
         ruzzle_board.word_info.len(),
     );
 
+    // 0.042s
     let now = Instant::now();
     ruzzle_board.write_to_file();
     println!("File writing took {}s.", now.elapsed().as_secs_f32());
