@@ -40,24 +40,30 @@ const U64_TO_CHAR: [char; 30] = ['!', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I
 // Convenience.
 const D_U64: u64 = 4;
 const T_U64: u64 = 20;
+const D_USIZE: usize = D_U64 as usize;
+const T_USIZE: usize = T_U64 as usize;
+
 const TWO_U64: u64 = 27;
 const THREE_U64: u64 = 28;
 
 #[allow(dead_code)]
 const DASH_U64: u64 = 29;
 
+//const DICT_BYTES: &'static [u8] = include_bytes!("../data/TWL06/binary.bin");
+//const PREFIX_BYTES: &'static [u8] = include_bytes!("../data/prefixes/binary.bin");
+
 /// Maintains the board state and words found in the board.
 struct Board {
     word_info: Vec<(String, usize, Vec<(usize, usize)>)>,
-    board: Vec<u64>,
-    points: Vec<usize>,
-    word_int_mults: Vec<usize>,
+    board: [u64; BOARD_SIZE * BOARD_SIZE],
+    points: [usize; BOARD_SIZE * BOARD_SIZE],
+    word_int_mults: [usize; BOARD_SIZE * BOARD_SIZE],
     prefixes: HashSet<u64, BuildHasherDefault<FnvHasher>>,
     dictionary: HashSet<u64, BuildHasherDefault<FnvHasher>>,
 }
 
 impl Board {
-    fn sort_entries(self: & mut Self) {
+    fn sort_entries(self: &mut Self) {
         self.word_info.sort_by(|a, b| b.1.cmp(&a.1))
     }
 
@@ -77,42 +83,33 @@ impl Board {
     }
 }
 
-/// Fills the board with information using the non recursive dfs algorithm.
-fn all_combos(board: &mut Board) {
-    for i in 0..BOARD_SIZE {
-        for j in 0..BOARD_SIZE {
-            dfs_helper(board, (i << 2) | j);
-        }
-    }
-}
-
-/// Generates the necessary arguments to launch dfs_non_recursive.
-fn dfs_helper(board: &mut Board, start_point: usize) {
-    dfs(board, gen_graph(), start_point, board.board[start_point],
-        board.points[start_point], board.word_int_mults[start_point]);
-}
-
 /// A non recursive depth first search which identifies all words, and adds them to
 /// board.word_info_as_str with their string representation, score and path. Returns nothing.
-fn dfs(board: &mut Board, graph: Vec<Vec<usize>>, start_point: usize, start_char: u64,
-       start_pts: usize, start_mult: usize) {
-    let mut stack: Vec<(u64, u64, usize, usize, usize, usize)> = Vec::with_capacity(40);
+fn dfs(board: &mut Board, graph: Vec<Vec<usize>>) {
+    let mut stack: Vec<(u64, u64, usize, usize, usize, usize)> = Vec::with_capacity(120);
+
+    for i in 0..BOARD_SIZE * BOARD_SIZE {
+        stack.push(((16 | i) as u64, board.board[i], board.points[i], board.word_int_mults[i], 1, 0));
+    }
     /// Paths consist of 12 five bit vertices:
     /// [continuation_flag:1][x:2][y:2]
 
-    let path = (16 | start_point) as u64;
-    stack.push((path, start_char, start_pts, start_mult, 1, 0));
-
+    // This whole thing takes about 100ns per iteration, on average (0.0006s for 6000 fn calls).
+    // Out of 72846 values, we narrow it down to 6000 -> produce 410 results.
+    // Most pruning occurs around 4-8 values. 2-3 doesn't really do much, but the cost of hashing
+    // is roughly equal to the cost of going through a full operation. Past 9 values, most of the tree
+    // is already completed.
     while !stack.is_empty() {
-        let popped_item = stack.pop().unwrap();
         let (path, word, word_pts,
-            word_mult, mut word_len, mut visited) = popped_item;
+            word_mult, mut word_len, mut visited) = stack.pop().expect("is_empty check should prevent this.");
 
         if (word_len >= MIN_WORD_LEN) & (word_len <= MAX_WORD_LEN) & board.dictionary.contains(&word) {
             let mut score = word_pts * word_mult;
             if word_len > 4 {
                 score += 5 * (word_len - 4);
             }
+
+            // Parsing words takes very little time - only ~3% of calls get this far.
             board.word_info.push((parse_to_str(word), score, parse_to_vec(path)));
         }
 
@@ -120,33 +117,35 @@ fn dfs(board: &mut Board, graph: Vec<Vec<usize>>, start_point: usize, start_char
         visited |= 1 << vert;
         word_len += 1;
 
-        for vertex_addr in graph[vert].iter() {
+        for vertex_addr in &graph[vert] {
             let vertex = *vertex_addr;
 
             if ((visited >> vertex) & 1) == 0 {
                 let temp_word = (word << 5) | board.board[vertex];
-                let path_clone = (path << 5) | 16 | (vertex as u64);
 
+                // Testing bloom filters doesn't really suggest a significant difference.
                 if (word_len <= PREFIX_UPPER_BOUND) & !board.prefixes.contains(&temp_word) {
                     continue;
                 }
+
+                let path_clone = (path << 5) | 16 | (vertex as u64);
 
                 if word_len == MAX_WORD_LEN {
                     if board.dictionary.contains(&temp_word) {
                         let score = word_pts * word_mult + 40;
                         board.word_info.push((parse_to_str(temp_word),
-                                                     score, parse_to_vec(path_clone)));
+                                              score, parse_to_vec(path_clone)));
                     }
                     continue;
                 }
 
-                let temp_visited = visited | (1 << vertex);
                 stack.push((path_clone, temp_word, word_pts + board.points[vertex],
-                            word_mult * board.word_int_mults[vertex], word_len, temp_visited));
+                            word_mult * board.word_int_mults[vertex], word_len, visited | (1 << vertex)));
             }
         }
     }
 }
+
 
 /// Returns a u64 representation of any string that is twelve characters or less, and only
 /// contains the letters A-Z. Every five bits, up until 60 bits or five zero bits occur,
@@ -220,6 +219,26 @@ fn read_prefixes(str_to_u64: &HashMap<char, u64>) -> HashSet<u64, BuildHasherDef
     return prefixes;
 }
 
+//fn convert_prefixes_to_set() -> HashSet<u64, BuildHasherDefault<FnvHasher>> {
+//    let mut prefixes = FnvHashSet::with_capacity_and_hasher(250000, Default::default());
+//    let arr_len = PREFIX_BYTES.len() >> 3;
+//    for i in 0..arr_len {
+//        prefixes.insert(u64::from_be_bytes(PREFIX_BYTES[i<<3..(i<<3) + 8].to_owned()));
+//    }
+//
+//    return prefixes;
+//}
+//
+//fn convert_dict_to_set() -> HashSet<u64, BuildHasherDefault<FnvHasher>> {
+//    let mut dict = FnvHashSet::with_capacity_and_hasher(200000, Default::default());
+//    let arr_len = DICT_BYTES.len() >> 3;
+//    for i in 0..arr_len {
+//        dict.insert(u64::from_be_bytes(DICT_BYTES[i<<3..(i<<3) + 8].to_owned()));
+//    }
+//
+//    return dict;
+//}
+
 /// Reads files which have been preprocessed to be compressed string representations.
 fn read_binary_prefixes() -> HashSet<u64, BuildHasherDefault<FnvHasher>> {
     let mut prefixes = FnvHashSet::with_capacity_and_hasher(250000, Default::default());
@@ -234,6 +253,7 @@ fn read_binary_prefixes() -> HashSet<u64, BuildHasherDefault<FnvHasher>> {
 
     return prefixes;
 }
+
 
 /// Returns a HashSet containing all words in their u64 representation.
 fn read_dict(str_to_u64: &HashMap<char, u64>) -> HashSet<u64, BuildHasherDefault<FnvHasher>> {
@@ -286,29 +306,35 @@ fn read_board(file_path: String) -> Vec<String> {
 /// return value.
 fn parse_board_and_mults(
     raw_board: Vec<String>,
-    str_to_u64: &HashMap<char, u64>) -> (Vec<Vec<u64>>, Vec<Vec<u64>>) {
-    let mut board = Vec::new();
-    let mut word_mults = Vec::new();
-    let mut is_still_board = true;
+    str_to_u64: &HashMap<char, u64>) -> ([u64; BOARD_SIZE * BOARD_SIZE], [usize; BOARD_SIZE * BOARD_SIZE]) {
+    let mut board: [u64; BOARD_SIZE * BOARD_SIZE] = [0; BOARD_SIZE * BOARD_SIZE];
+    let mut word_mults: [usize; BOARD_SIZE * BOARD_SIZE] = [0; BOARD_SIZE * BOARD_SIZE];
+    let mut all_chars: Vec<u64> = Vec::with_capacity(2 * BOARD_SIZE * BOARD_SIZE);
 
     for line in raw_board {
-        let line_empty = line.is_empty();
-        is_still_board = !line_empty & is_still_board;
-
-        let symbols: Vec<u64> = line
+        let mut symbols = line
             .chars()
             .filter(|c| *c != ' ')
-            .map(|c| str_to_u64[&c])
-            .collect();
+            .map(|c| str_to_u64[&c]).collect();
 
-        if is_still_board {
-            board.push(symbols);
-        } else {
-            if !line_empty {
-                word_mults.push(symbols);
-            }
+        all_chars.append(& mut symbols);
+
+        if all_chars.len() > 2 * BOARD_SIZE * BOARD_SIZE {
+            break;
         }
     }
+
+    assert!(all_chars.len() >= 2 * BOARD_SIZE * BOARD_SIZE);
+
+    for i in 0..BOARD_SIZE * BOARD_SIZE {
+        board[i] = all_chars[i];
+        word_mults[i] = match all_chars[BOARD_SIZE * BOARD_SIZE + i] {
+            TWO_U64 => 2,
+            THREE_U64 => 3,
+            _ => 1,
+        };
+    }
+
     return (board, word_mults);
 }
 
@@ -318,37 +344,25 @@ fn parse_word_mults_to_int_mults(word_mults: &Vec<Vec<u64>>) -> Vec<Vec<usize>> 
     let mut word_int_mults = Vec::new();
 
     for line in word_mults {
-        let mut line_mults: Vec<usize> = Vec::new();
-        for letter in line {
-            line_mults.push(match *letter {
-                TWO_U64 => 2,
-                THREE_U64 => 3,
-                _ => 1,
-            });
-        }
-        word_int_mults.push(line_mults)
+        word_int_mults.push(line.iter().map(|l| match *l {
+            TWO_U64 => 2,
+            THREE_U64 => 3,
+            _ => 1,
+        }).collect());
     }
     return word_int_mults;
 }
 
 /// Returns the points for each letter on the board.
-fn get_points(board: &Vec<Vec<u64>>, word_mults: &Vec<Vec<u64>>) -> Vec<Vec<usize>> {
-    let mut points = Vec::new();
+fn get_points(board: &[u64; BOARD_SIZE * BOARD_SIZE], word_mults: &[usize; BOARD_SIZE * BOARD_SIZE]) -> [usize; BOARD_SIZE * BOARD_SIZE] {
+    let mut points : [usize; BOARD_SIZE * BOARD_SIZE] = [0; BOARD_SIZE * BOARD_SIZE];
 
-    // Each index is a point - eg. A = 1. We skip 0.
-
-    for (board_line, mult_line) in board.iter().zip(word_mults) {
-        let mut line_points: Vec<usize> = Vec::new();
-        for (letter, mult) in board_line.iter().zip(mult_line) {
-            let letter_points = POINT_VALS[*letter as usize];
-            line_points.push(letter_points * match *mult {
-                D_U64 => 2,
-                T_U64 => 3,
+    for (index, (letter, mult)) in board.iter().zip(word_mults).enumerate() {
+        points[index] = POINT_VALS[*letter as usize] * match *mult {
+                D_USIZE => 2,
+                T_USIZE => 3,
                 _ => 1,
-            });
-        }
-
-        points.push(line_points);
+            };
     }
 
     return points;
@@ -357,8 +371,8 @@ fn get_points(board: &Vec<Vec<u64>>, word_mults: &Vec<Vec<u64>>) -> Vec<Vec<usiz
 /// Generates a graph of all possible neighbouring vertices, represented with adjacency lists.
 fn gen_graph() -> Vec<Vec<usize>> {
     let mut graph: Vec<Vec<usize>> = Vec::new();
-    let directions: Vec<(i8, i8)> = vec![(1, 0), (-1, 0), (0, 1), (0, -1),
-                                         (1, 1), (1, -1), (-1, 1), (-1, -1)];
+    let directions: [(i8, i8); 8] = [(1, 0), (-1, 0), (0, 1), (0, -1),
+        (1, 1), (1, -1), (-1, 1), (-1, -1)];
 
     for i in 0..BOARD_SIZE_I8 {
         for j in 0..BOARD_SIZE_I8 {
@@ -386,7 +400,7 @@ fn gen_visited() -> Vec<bool> {
 fn main() {
     let now = Instant::now();
 
-    let str_to_u64_map: HashMap<char, u64> = map! {'A' => 1, 'B'=> 2, 'C'=> 3, 'D'=> 4, 'E'=> 5,
+    let str_to_u64_map: HashMap<char, u64> = map!{'A' => 1, 'B'=> 2, 'C'=> 3, 'D'=> 4, 'E'=> 5,
     'F'=> 6, 'G'=> 7, 'H'=> 8, 'I'=> 9, 'J'=> 10, 'K'=> 11, 'L' => 12, 'M' => 13, 'N'=> 14,
     'O'=> 15, 'P'=> 16, 'Q'=> 17, 'R'=> 18, 'S'=> 19, 'T'=> 20, 'U'=> 21, 'V'=> 22, 'W'=> 23,
     'X' => 24, 'Y' => 25, 'Z'=> 26, '2' => 27, '3' => 28, '-' => 29};
@@ -397,35 +411,21 @@ fn main() {
 
     println!("Files took {}s to read.", now.elapsed().as_secs_f32());
 
-    let (board, word_mults) = parse_board_and_mults(raw_board, &str_to_u64_map);
-    let word_int_mults = parse_word_mults_to_int_mults(&word_mults);
-    let points = get_points(&board, &word_mults);
-
-    let mut flat_board = Vec::with_capacity(16);
-    for mut row in board {
-        flat_board.append(&mut row);
-    }
-    let mut flat_points = Vec::with_capacity(16);
-    for mut row in points {
-        flat_points.append(&mut row);
-    }
-    let mut flat_word_int_mults = Vec::with_capacity(16);
-    for mut row in word_int_mults {
-        flat_word_int_mults.append(&mut row);
-    }
+    let (board, word_int_mults) = parse_board_and_mults(raw_board, &str_to_u64_map);
+    let points = get_points(&board, &word_int_mults);
 
     let mut ruzzle_board = Board {
-        word_info: Vec::new(),
-        board: flat_board,
-        points: flat_points,
-        word_int_mults: flat_word_int_mults,
+        word_info: Vec::with_capacity(500),
+        board,
+        points,
+        word_int_mults,
         prefixes,
         dictionary,
     };
 
     let now = Instant::now();
 
-    all_combos(&mut ruzzle_board);
+    dfs(&mut ruzzle_board, gen_graph());
     ruzzle_board.sort_entries();
 
     println!(
@@ -434,7 +434,6 @@ fn main() {
         ruzzle_board.word_info.len(),
     );
 
-    // 0.042s
     let now = Instant::now();
     ruzzle_board.write_to_file();
     println!("File writing took {}s.", now.elapsed().as_secs_f32());

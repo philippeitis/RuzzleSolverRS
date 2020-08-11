@@ -3,11 +3,6 @@ use std::fs::File;
 use std::io::{BufReader, BufRead};
 use std::time::Instant;
 
-static STR_TO_U8_MAP: HashMap<char, u8> = map! {'A' => 1, 'B'=> 2, 'C'=> 3, 'D'=> 4, 'E'=> 5,
- 'F'=> 6, 'G'=> 7, 'H'=> 8, 'I'=> 9, 'J'=> 10, 'K'=> 11, 'L' => 12, 'M' => 13, 'N'=> 14,
-  'O'=> 15, 'P'=> 16, 'Q'=> 17, 'R'=> 18, 'S'=> 10, 'T'=> 20, 'U'=> 21, 'V'=> 22, 'W'=> 23,
-   'X' => 24, 'Y' => 25, 'Z'=> 26};
-
 static PATH_TO_PREFIXES: &str = r"data/prefixes/";
 static PATH_TO_DICTIONARY: &str = r"data/TWL06/";
 static PATH_TO_BOARD: &str = r"board.txt";
@@ -98,12 +93,10 @@ fn parse_board_and_mults(raw_board: Vec<String>) -> (Vec<Vec<char>>, Vec<Vec<cha
         let line_empty = line.is_empty();
         is_still_board = !line_empty & is_still_board;
 
-        let mut symbols: Vec<char> = Vec::new();
-        for character in line.split(" ") {
-            if !character.is_empty() {
-                symbols.push(character.parse().unwrap());
-            }
-        }
+        let symbols: Vec<u64> = line
+            .chars()
+            .filter(|c| *c != ' ')
+            .collect();
 
         if is_still_board {
             board.push(symbols);
@@ -119,21 +112,12 @@ fn parse_board_and_mults(raw_board: Vec<String>) -> (Vec<Vec<char>>, Vec<Vec<cha
 fn parse_word_mults_to_int_mults(word_mults: &Vec<Vec<char>>) -> Vec<Vec<usize>> {
     let mut word_int_mults = Vec::new();
 
-    let c2: char = "2".parse().unwrap();
-    let c3: char = "3".parse().unwrap();
-
     for line in word_mults {
-        let mut line_mults: Vec<usize> = Vec::new();
-        for letter in line {
-            if letter.eq(&c2) {
-                line_mults.push(2);
-            } else if letter.eq(&c3) {
-                line_mults.push(3);
-            } else {
-                line_mults.push(1);
-            }
-        }
-        word_int_mults.push(line_mults)
+        word_int_mults.push(line.iter().map(|l| match *l {
+            '2' => 2,
+            '3' => 3,
+            _ => 1,
+        }).collect());
     }
     return word_int_mults;
 }
@@ -330,11 +314,6 @@ fn all_combos_r(board: &mut Board) {
     }
 }
 
-fn parse_to_str(str_as_num: u64) -> String {
-    let mut str_repr = String::with_capacity(12);
-
-}
-
 struct Board {
     words_info: Vec<(String, usize, Vec<(usize, usize)>)>,
     board: Vec<Vec<char>>,
@@ -349,7 +328,7 @@ struct Board {
 fn main() {
     let prefixes = read_prefixes();
     let dictionary = read_dict();
-    let raw_board = read_board(PATH_TO_BOARD.to_string());
+    let raw_board = read_board(PATH_TO_BOARD);
 
     let (board, word_mults) = parse_board_and_mults(raw_board);
     let word_int_mults = parse_word_mults_to_int_mults(&word_mults);
