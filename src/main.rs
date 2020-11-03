@@ -40,7 +40,7 @@ const PREFIX_UPPER_BOUND: u8 = 8;
 const U64_TO_CHAR: [char; 30] = ['!', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I',
     'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', '2', '3', '-'];
 
-// const U64_TO_U8: [u8; 30] = *b"!ABCDEFGHIJKLMNOPQRSTUVWXYZ23-";
+const U64_TO_U8: [u8; 30] = *b"!ABCDEFGHIJKLMNOPQRSTUVWXYZ23-";
 
 // Convenience.
 const D_U8: u8 = 4;
@@ -60,7 +60,7 @@ const THREE_U8: u8 = 28 as u8;
 /// Maintains the board state and words found in the board.
 struct Board {
     //              word, score, path
-    word_info: Vec<(String, u16, u64)>,
+    word_info: Vec<(u64, u16, u64)>,
     board: [u8; BOARD_SIZE * BOARD_SIZE],
     points: [u8; BOARD_SIZE * BOARD_SIZE],
     word_int_mults: [u8; BOARD_SIZE * BOARD_SIZE],
@@ -81,6 +81,8 @@ impl Board {
         (0, 0), (0, 0), (0, 0), (0, 0), \
         (0, 0), (0, 0), (0, 0), (0, 0), ";
         let mut path_buf_ = [(0, 0); 12];
+        let mut str_repr = [0; 12];
+        let mut first_word_buf = [0u8; 160];
         for (word, score, mut path_as_u64) in self.word_info.iter() {
             // assert!(path.len() * 8 <= path_buf.len());
             let max_bit = path_to_vec_buffered(path_as_u64, &mut path_buf_);
@@ -92,13 +94,20 @@ impl Board {
             let i = 11 - max_bit;
             path_buf[i * 8 + 1] = x + 48;
             path_buf[i * 8 + 4] = y + 48;
-            path_buf[i * 8 + 6] = b']';
-            path_buf[i * 8 + 7] = b'\n';
-
-            buf_writer.write_all(format!("{}, {}, [", word, *score, ).as_bytes()).unwrap();
-            buf_writer.write_all(&path_buf[..i * 8 + 8]).unwrap();
-            path_buf[i * 8 + 6] = b',';
-            path_buf[i * 8 + 7] = b' ';
+            let max_bit = parse_to_str_buf(*word, &mut str_repr);
+            first_word_buf[..12-max_bit].clone_from_slice(&str_repr[max_bit..]);
+            first_word_buf[12-max_bit] = b',';
+            first_word_buf[13-max_bit] = b' ';
+            let score = score.to_string().into_bytes();
+            let score_len = score.len();
+            first_word_buf[14-max_bit..14-max_bit+score_len].clone_from_slice(score.as_slice());
+            first_word_buf[14-max_bit+score_len] = b',';
+            first_word_buf[15-max_bit+score_len] = b' ';
+            first_word_buf[16-max_bit+score_len] = b'[';
+            first_word_buf[17-max_bit+score_len..17-max_bit+score_len+i*8+6].clone_from_slice(&path_buf[..i * 8 + 6]);
+            first_word_buf[17-max_bit+score_len+i*8+6] = b']';
+            first_word_buf[17-max_bit+score_len+i*8+7] = b'\n';
+            buf_writer.write_all(&first_word_buf[..17-max_bit+score_len+i*8+8]).unwrap();
         }
     }
 }
@@ -130,7 +139,7 @@ fn dfs(board: &mut Board, graph: Vec<Vec<u8>>) {
             }
 
             // Parsing words takes very little time - only ~3% of calls get this far.
-            board.word_info.push((parse_to_str(word), score, path));
+            board.word_info.push((word, score, path));
         }
 
         let vert = path & 0xF;
@@ -142,7 +151,7 @@ fn dfs(board: &mut Board, graph: Vec<Vec<u8>>) {
                 let temp_word = (word << 5) | (board.board[vertex as usize] as u64);
 
                 // Testing bloom filters doesn't really suggest a significant difference.
-                if word_len <= PREFIX_UPPER_BOUND && !board.prefixes.contains(&temp_word) {
+                if word_len >= PREFIX_LOWER_BOUND && word_len <= PREFIX_UPPER_BOUND && !board.prefixes.contains(&temp_word) {
                     continue;
                 }
 
@@ -151,7 +160,7 @@ fn dfs(board: &mut Board, graph: Vec<Vec<u8>>) {
                 if word_len == MAX_WORD_LEN {
                     if board.dictionary.contains(&temp_word) {
                         let score = word_pts * (word_mult as u16) + 40;
-                        board.word_info.push((parse_to_str(temp_word),
+                        board.word_info.push((temp_word,
                                               score, path_clone));
                     }
                     continue;
@@ -176,11 +185,7 @@ fn dfs(board: &mut Board, graph: Vec<Vec<u8>>) {
 //     return output;
 // }
 
-/// Generates the string representation of any string that is represented in the first 60
-/// bits of str_as_num, where each group of five consecutive bits corresponds the the character
-/// at the index in U64_TO_CHAR.
-fn parse_to_str(str_as_num: u64) -> String {
-    let mut str_repr = [U64_TO_CHAR[0]; 12];
+fn parse_to_str_buf(str_as_num: u64, str_repr: &mut [u8; 12]) -> usize {
     let mut str_numbers = str_as_num;
     let mut max_bit = 12;
 
@@ -190,16 +195,39 @@ fn parse_to_str(str_as_num: u64) -> String {
         if val != 0 {
             max_bit -= 1;
             str_numbers >>= 5;
-            str_repr[max_bit] = U64_TO_CHAR[val];
+            str_repr[max_bit] = U64_TO_U8[val];
         } else {
             break;
         }
     }
 
-    // unsafe {
-    //     return std::str::from_utf8_unchecked(&str_repr[max_bit..]).to_string();
-    // }
-    str_repr[max_bit..].iter().collect()
+    max_bit
+}
+
+/// Generates the string representation of any string that is represented in the first 60
+/// bits of str_as_num, where each group of five consecutive bits corresponds the the character
+/// at the index in U64_TO_CHAR.
+fn parse_to_str(str_as_num: u64) -> String {
+    let mut str_repr = [U64_TO_U8[0]; 12];
+    let mut str_numbers = str_as_num;
+    let mut max_bit = 12;
+
+    for _ in 0..12 {
+        // Read the last five bits.
+        let val = (str_numbers & 0b11111) as usize;
+        if val != 0 {
+            max_bit -= 1;
+            str_numbers >>= 5;
+            str_repr[max_bit] = U64_TO_U8[val];
+        } else {
+            break;
+        }
+    }
+
+    unsafe {
+        return std::str::from_utf8_unchecked(&str_repr[max_bit..]).to_string();
+    }
+    // str_repr[max_bit..].iter().collect()
 }
 
 fn path_to_vec_buffered(path_as_u64: u64, buf: &mut [(u8, u8); 12]) -> usize {
@@ -212,6 +240,11 @@ fn path_to_vec_buffered(path_as_u64: u64, buf: &mut [(u8, u8); 12]) -> usize {
         let x = (mut_path & 0b11) as u8;
         mut_path >>= 3;
         max_bit -= 1;
+        // unsafe {
+        //     let ind = buf.get_unchecked_mut(max_bit);
+        //     *ind = (x, y);
+        // }
+
         buf[max_bit] = (x, y);
     }
 
